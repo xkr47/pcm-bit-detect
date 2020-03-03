@@ -1,15 +1,13 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
-use crate::PcmType::{Signed16, Signed24};
 use std::fmt;
 
-#[derive(Debug)]
-enum PcmType {
-    Signed16,
-    Unsigned16,
-    Signed24,
-    Unsigned24,
+#[derive(Clone,Copy,Debug)]
+struct PcmType {
+    signed: bool,
+    bits24: bool,
+    big_endian: bool,
 }
 
 #[derive(Debug)]
@@ -24,15 +22,43 @@ struct PcmResults {
     u24be: f64,
 }
 
+impl PcmResults {
+    const THRESHOLD: f64 = 10.0;
+
+    fn guess_type(&self) -> PcmType {
+        let mut res = vec!(
+            (PcmType { signed: true, bits24: false, big_endian: false }, self.s16le),
+            (PcmType { signed: true, bits24: false, big_endian: true }, self.s16be),
+            (PcmType { signed: false, bits24: false, big_endian: false }, self.u16le),
+            (PcmType { signed: false, bits24: false, big_endian: true }, self.u16be),
+            (PcmType { signed: true, bits24: true, big_endian: false }, self.s24le),
+            (PcmType { signed: true, bits24: true, big_endian: true }, self.s24be),
+            (PcmType { signed: false, bits24: true, big_endian: false }, self.u24le),
+            (PcmType { signed: false, bits24: true, big_endian: true }, self.u24be),
+        );
+        res.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        println!("Sorted {:?}", res);
+        if res[0].1 / res[1].1 < PcmResults::THRESHOLD {
+            panic!("Below threshold for {:?} vs {:?}", res[0], res[1]);
+        }
+        res[0].0
+    }
+}
+
 fn main() {
     /*
     let file = "test.pcm";
     let pcm_type = detect(file).expect(&format!("Failed to detect type of file {}", file));
     println!("Type of {} seems to be {:?}", file, pcm_type);
     */
-    for file in [ "test-s16.pcm", "test-s16be.pcm", "test-u16.pcm", "test-u16be.pcm", "test-s24.pcm", "test-s24be.pcm", "test-u24.pcm", "test-u24be.pcm" ].iter() {
+    for file in [
+        "test-s16.pcm", "test-s16be.pcm", "test-u16.pcm", "test-u16be.pcm",
+        "test-s24.pcm", "test-s24be.pcm", "test-u24.pcm", "test-u24be.pcm"
+    ].iter() {
         println!("---- {}", file);
-        detect(file).unwrap();
+        let res = detect(file).unwrap();
+        println!("---- {} => {:?}", file, res);
+
     }
 
 }
@@ -42,18 +68,27 @@ struct Avg {
     diffsum: u64,
     count: u32,
     last: i8,
+    debug: bool,
 }
 
 impl Avg {
     fn new() -> Avg {
-        Avg { sum: 0, diffsum: 0, count: 0, last: 0 }
+        Avg { sum: 0, diffsum: 0, count: 0, last: 0, debug: false }
+    }
+    fn newd() -> Avg {
+        Avg { sum: 0, diffsum: 0, count: 0, last: 0, debug: true }
     }
 
     fn add(&mut self, value: i8) {
-        self.sum += value as i64;
+        if self.count > 0 {
+            self.sum += value as i64;
+            self.diffsum += (value as i64 - self.last as i64).abs() as u64;
+        }
         self.count = self.count+1;
-        self.diffsum += (value as i64 - self.last as i64).abs() as u64;
         self.last = value;
+        if self.debug && self.count < 10000 {
+            println!("{}. {} {} {}", self.count, value, self.diffsum, self.diffavg());
+        }
     }
 
     fn avg(&self) -> f64 {
@@ -62,6 +97,35 @@ impl Avg {
 
     fn diffavg(&self) -> f64 {
         self.diffsum as f64 / self.count as f64
+    }
+}
+
+#[derive(Clone,Copy,Debug)]
+struct Stereo<T: Copy + std::fmt::Debug> {
+    l: T,
+    r: T
+}
+
+struct Avg2 {
+    l: Avg,
+    r: Avg
+}
+
+impl Avg2 {
+    fn new() -> Avg2 { Avg2 { l: Avg::new(), r: Avg::new() } }
+    fn newd() -> Avg2 { Avg2 { l: Avg::newd(), r: Avg::newd() } }
+
+    fn add(&mut self, l: i8, r: i8) {
+        self.l.add(l);
+        self.r.add(r);
+    }
+
+    fn avg(&self) -> Stereo<f64> {
+        Stereo { l: self.l.avg(), r: self.r.avg() }
+    }
+
+    fn diffavg(&self) -> Stereo<f64> {
+        Stereo { l: self.l.diffavg(), r: self.r.diffavg() }
     }
 }
 
@@ -92,17 +156,17 @@ fn detect(filename: &str) -> std::io::Result<PcmType> {
     let mut buf_reader = BufReader::new(file);
 
     let mut a16: [[Avg; 2]; 2] = [[Avg::new(), Avg::new()], [Avg::new(), Avg::new()]];
-    let mut a24: [[[Avg; 3]; 2]; 2] = [ // [channel][bit7-inv][byte]
-        [[Avg::new(), Avg::new(), Avg::new()], [Avg::new(), Avg::new(), Avg::new()]],
-        [[Avg::new(), Avg::new(), Avg::new()], [Avg::new(), Avg::new(), Avg::new()]]
+    let mut a24: [[Avg2; 3]; 2] = [ // [bit7-inv][byte]
+        [Avg2::new(), Avg2::new(), Avg2::new()], [Avg2::new(), Avg2::new(), Avg2::new()],
     ];
     let mut buf = [0_u8; 12];
     let mut bufs = [[0_i8; 12]; 2];
 
     while let Ok(()) = buf_reader.read_exact(&mut buf) {
         for i in 0..buf.len() {
-            bufs[0][i] = buf[i] as i8;
-            bufs[1][i] = bufs[0][i].wrapping_add(-128);
+            let v = buf[i] as i8;
+            bufs[0][i] = v;
+            bufs[1][i] = v.wrapping_add(-128);
         }
         for toggled in 0..=1 { // 0 = original, 1 = bit 7 toggled
             for sample in 0..=2 {
@@ -112,10 +176,9 @@ fn detect(filename: &str) -> std::io::Result<PcmType> {
             }
             for sample in 0..=1 {
                 for byte in 0..=2 {
-                    //if toggled == 0 || byte != 1 { // TODO uncomment when done and ensure no change
-                    a24[0][toggled][byte].add(bufs[toggled][sample * 6 + byte]);
-                    a24[1][toggled][byte].add(bufs[toggled][sample * 6 + 3 + byte]);
-                    //}
+                    if toggled == 0 || byte != 1 {
+                        a24[toggled][byte].add(bufs[toggled][sample * 6 + byte], bufs[toggled][sample * 6 + 3 + byte]);
+                    }
                 }
             }
         }
@@ -123,38 +186,39 @@ fn detect(filename: &str) -> std::io::Result<PcmType> {
     let v16 = [[a16[0][0].diffavg(), a16[0][1].diffavg()], [a16[1][0].diffavg(), a16[1][1].diffavg()]];
     let v24i = [
         [
-            a24[0][0][0].diffavg().min(a24[1][0][0].diffavg()),
-            a24[0][0][1].diffavg().min(a24[1][0][1].diffavg()),
-            a24[0][0][2].diffavg().min(a24[1][0][2].diffavg())
+            a24[0][0].diffavg(),
+            a24[0][1].diffavg(),
+            a24[0][2].diffavg()
         ], [
-            a24[0][1][0].diffavg().min(a24[1][1][0].diffavg()),
-            0.0 /* not needed */,
-            a24[0][1][2].diffavg().min(a24[1][1][2].diffavg())
+            a24[1][0].diffavg(),
+            Stereo { l: 0.0, r: 0.0 }, /* 7-bit toggled middle byte not needed */
+            a24[1][2].diffavg()
         ]
     ];
     // the inner if expressions below are to handle 16 bit files that have been converted to 24 bit by filling lsbs with zeroes
-    let v24 = [
+    let v24= [
         [
-            if v24i[0][0] <= 0.0 { v24i[0][1] } else { v24i[0][0] },
+            Stereo { l: if v24i[0][0].l <= 0.0 { v24i[0][1].l } else { v24i[0][0].l }, r: if v24i[0][0].r <= 0.0 { v24i[0][1].r } else { v24i[0][0].r } },
             v24i[0][1],
-            if v24i[0][2] <= 0.0 { v24i[0][1] } else { v24i[0][2] },
+            Stereo { l: if v24i[0][2].l <= 0.0 { v24i[0][1].l } else { v24i[0][2].l }, r: if v24i[0][2].r <= 0.0 { v24i[0][1].r } else { v24i[0][2].r } },
         ], [
-            v24i[1][0],
-            0.0, // not needed
-            v24i[1][2]
+            Stereo { l: if v24i[1][0].l <= 0.0 { v24i[0][1].l } else { v24i[1][0].l }, r: if v24i[1][0].r <= 0.0 { v24i[0][1].r } else { v24i[1][0].r } },
+            v24i[1][1], // not needed
+            Stereo { l: if v24i[1][2].l <= 0.0 { v24i[0][1].l } else { v24i[1][2].l }, r: if v24i[1][2].r <= 0.0 { v24i[0][1].r } else { v24i[1][2].r } },
         ]
     ];
     println!("v16 signed {:?} unsigned {:?}", v16[0], v16[1]);
     println!("v24 signed {:?} unsigned {:?}", v24[0], v24[1]);
-    println!("Res {:?}", PcmResults {
-        s16le: if v16[0][1] > 0.0 { v16[0][0] / v16[0][1] * v16[1][1] } else { 1000. },
-        s16be: if v16[0][0] > 0.0 { v16[0][1] / v16[0][0] * v16[1][0] } else { 1000. },
-        u16le: if v16[1][1] > 0.0 { v16[0][0] / v16[1][1] * v16[0][1] } else { 1000. },
-        u16be: if v16[1][0] > 0.0 { v16[0][1] / v16[1][0] * v16[0][0] } else { 1000. },
-        s24le: if v24[0][2] > 0.0 { v24[0][1] / v24[0][2] * v24[1][2] } else { 1000. },
-        s24be: if v24[0][0] > 0.0 { v24[0][1] / v24[0][0] * v24[1][0] } else { 1000. },
-        u24le: if v24[1][2] > 0.0 { v24[0][1] / v24[1][2] * v24[0][2] } else { 1000. },
-        u24be: if v24[1][0] > 0.0 { v24[0][1] / v24[1][0] * v24[0][0] } else { 1000. },
-    });
-    Ok(Signed24)
+    let results = PcmResults {
+        s16le: if v16[0][1] > 0.0 { v16[0][0] / v16[0][1] * v16[1][1] } else { 000. },
+        s16be: if v16[0][0] > 0.0 { v16[0][1] / v16[0][0] * v16[1][0] } else { 000. },
+        u16le: if v16[1][1] > 0.0 { v16[0][0] / v16[1][1] * v16[0][1] } else { 000. },
+        u16be: if v16[1][0] > 0.0 { v16[0][1] / v16[1][0] * v16[0][0] } else { 000. },
+        s24le: (if v24[0][2].l > 0.0 { v24[0][1].l / v24[0][2].l * v24[1][2].l } else { 000. }).min(if v24[0][2].r > 0.0 { v24[0][1].r / v24[0][2].r * v24[1][2].r } else { 000. }),
+        s24be: (if v24[0][0].l > 0.0 { v24[0][1].l / v24[0][0].l * v24[1][0].l } else { 000. }).min(if v24[0][0].r > 0.0 { v24[0][1].r / v24[0][0].r * v24[1][0].r } else { 000. }),
+        u24le: (if v24[1][2].l > 0.0 { v24[0][1].l / v24[1][2].l * v24[0][2].l } else { 000. }).min(if v24[1][2].r > 0.0 { v24[0][1].r / v24[1][2].r * v24[0][2].r } else { 000. }),
+        u24be: (if v24[1][0].l > 0.0 { v24[0][1].l / v24[1][0].l * v24[0][0].l } else { 000. }).min(if v24[1][0].r > 0.0 { v24[0][1].r / v24[1][0].r * v24[0][0].r } else { 000. }),
+    };
+    println!("Res {:?}", results);
+    Ok(results.guess_type())
 }
