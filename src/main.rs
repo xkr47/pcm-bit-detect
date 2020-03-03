@@ -92,7 +92,10 @@ fn detect(filename: &str) -> std::io::Result<PcmType> {
     let mut buf_reader = BufReader::new(file);
 
     let mut a16: [[Avg; 2]; 2] = [[Avg::new(), Avg::new()], [Avg::new(), Avg::new()]];
-    let mut a24: [[Avg; 3]; 2] = [[Avg::new(), Avg::new(), Avg::new()], [Avg::new(), Avg::new(), Avg::new()]];
+    let mut a24: [[[Avg; 3]; 2]; 2] = [ // [channel][bit7-inv][byte]
+        [[Avg::new(), Avg::new(), Avg::new()], [Avg::new(), Avg::new(), Avg::new()]],
+        [[Avg::new(), Avg::new(), Avg::new()], [Avg::new(), Avg::new(), Avg::new()]]
+    ];
     let mut buf = [0_u8; 12];
     let mut bufs = [[0_i8; 12]; 2];
 
@@ -110,14 +113,25 @@ fn detect(filename: &str) -> std::io::Result<PcmType> {
             for sample in 0..=1 {
                 for byte in 0..=2 {
                     //if toggled == 0 || byte != 1 { // TODO uncomment when done and ensure no change
-                        a24[toggled][byte].add(bufs[toggled][sample * 6 + byte]);
+                    a24[0][toggled][byte].add(bufs[toggled][sample * 6 + byte]);
+                    a24[1][toggled][byte].add(bufs[toggled][sample * 6 + 3 + byte]);
                     //}
                 }
             }
         }
     };
     let v16 = [[a16[0][0].diffavg(), a16[0][1].diffavg()], [a16[1][0].diffavg(), a16[1][1].diffavg()]];
-    let v24i = [[a24[0][0].diffavg(), a24[0][1].diffavg(), a24[0][2].diffavg()], [a24[1][0].diffavg(), 0.0 /* not needed */, a24[1][2].diffavg()]];
+    let v24i = [
+        [
+            a24[0][0][0].diffavg().min(a24[1][0][0].diffavg()),
+            a24[0][0][1].diffavg().min(a24[1][0][1].diffavg()),
+            a24[0][0][2].diffavg().min(a24[1][0][2].diffavg())
+        ], [
+            a24[0][1][0].diffavg().min(a24[1][1][0].diffavg()),
+            0.0 /* not needed */,
+            a24[0][1][2].diffavg().min(a24[1][1][2].diffavg())
+        ]
+    ];
     // the inner if expressions below are to handle 16 bit files that have been converted to 24 bit by filling lsbs with zeroes
     let v24 = [
         [
