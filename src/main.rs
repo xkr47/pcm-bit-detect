@@ -25,7 +25,7 @@ fn main() {
                          if res.big_endian { "big-endian" } else { "little-endian" },
                 );
             } else {
-                println!("{}: unclear", file);
+                println!("{}: unclear {:?}", file, res);
             }
         } else {
             println!("{}: error {}", file, res.unwrap_err());
@@ -94,7 +94,7 @@ struct PcmResults {
 
 impl PcmResults {
     // how much more sure must we be of the most likely outcome compared to the second most likely
-    const THRESHOLD: f64 = 10.0;
+    const THRESHOLD: f64 = 4.0;
 
     fn guess_type(&self) -> Result<PcmType, String> {
         let mut res = vec!(
