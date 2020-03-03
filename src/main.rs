@@ -1,9 +1,64 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
-use std::fmt;
+use std::{fmt, env};
 
-#[derive(Clone,Copy,Debug)]
+fn main() {
+    for file in [
+        "test-s16.pcm", "test-s16be.pcm", "test-u16.pcm", "test-u16be.pcm",
+        "test-s24.pcm", "test-s24be.pcm", "test-u24.pcm", "test-u24be.pcm"
+    ].iter() {
+        let res = detect(file).unwrap();
+        println!("{}: {} {} {}",
+                 file,
+                 if res.signed { "signed" } else { "unsigned" },
+                 if res.bits24 { "24bit" } else { "16bit" },
+                 if res.big_endian { "big-endian" } else { "little-endian" },
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    extern crate spectral;
+    use spectral::prelude::*;
+
+    #[test]
+    fn s16le() {
+        assert_that(&detect("test-s16.pcm")).is_ok().is_equal_to(PcmType { signed: true, bits24: false, big_endian: false });
+    }
+    #[test]
+    fn s16be() {
+        assert_that(&detect("test-s16be.pcm")).is_ok().is_equal_to(PcmType { signed: true, bits24: false, big_endian: true });
+    }
+    #[test]
+    fn u16le() {
+        assert_that(&detect("test-u16.pcm")).is_ok().is_equal_to(PcmType { signed: false, bits24: false, big_endian: false });
+    }
+    #[test]
+    fn u16be() {
+        assert_that(&detect("test-u16be.pcm")).is_ok().is_equal_to(PcmType { signed: false, bits24: false, big_endian: true });
+    }
+    #[test]
+    fn s24le() {
+        assert_that(&detect("test-s24.pcm")).is_ok().is_equal_to(PcmType { signed: true, bits24: true, big_endian: false });
+    }
+    #[test]
+    fn s24be() {
+        assert_that(&detect("test-s24be.pcm")).is_ok().is_equal_to(PcmType { signed: true, bits24: true, big_endian: true });
+    }
+    #[test]
+    fn u24le() {
+        assert_that(&detect("test-u24.pcm")).is_ok().is_equal_to(PcmType { signed: false, bits24: true, big_endian: false });
+    }
+    #[test]
+    fn u24be() {
+        assert_that(&detect("test-u24be.pcm")).is_ok().is_equal_to(PcmType { signed: false, bits24: true, big_endian: true });
+    }
+}
+
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
 struct PcmType {
     signed: bool,
     bits24: bool,
@@ -23,6 +78,7 @@ struct PcmResults {
 }
 
 impl PcmResults {
+    // how much more sure must we be of the most likely outcome compared to the second most likely
     const THRESHOLD: f64 = 10.0;
 
     fn guess_type(&self) -> PcmType {
@@ -37,30 +93,11 @@ impl PcmResults {
             (PcmType { signed: false, bits24: true, big_endian: true }, self.u24be),
         );
         res.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        println!("Sorted {:?}", res);
         if res[0].1 / res[1].1 < PcmResults::THRESHOLD {
             panic!("Below threshold for {:?} vs {:?}", res[0], res[1]);
         }
         res[0].0
     }
-}
-
-fn main() {
-    /*
-    let file = "test.pcm";
-    let pcm_type = detect(file).expect(&format!("Failed to detect type of file {}", file));
-    println!("Type of {} seems to be {:?}", file, pcm_type);
-    */
-    for file in [
-        "test-s16.pcm", "test-s16be.pcm", "test-u16.pcm", "test-u16be.pcm",
-        "test-s24.pcm", "test-s24be.pcm", "test-u24.pcm", "test-u24be.pcm"
-    ].iter() {
-        println!("---- {}", file);
-        let res = detect(file).unwrap();
-        println!("---- {} => {:?}", file, res);
-
-    }
-
 }
 
 struct Avg {
@@ -207,8 +244,8 @@ fn detect(filename: &str) -> std::io::Result<PcmType> {
             Stereo { l: if v24i[1][2].l <= 0.0 { v24i[0][1].l } else { v24i[1][2].l }, r: if v24i[1][2].r <= 0.0 { v24i[0][1].r } else { v24i[1][2].r } },
         ]
     ];
-    println!("v16 signed {:?} unsigned {:?}", v16[0], v16[1]);
-    println!("v24 signed {:?} unsigned {:?}", v24[0], v24[1]);
+    //println!("v16 signed {:?} unsigned {:?}", v16[0], v16[1]);
+    //println!("v24 signed {:?} unsigned {:?}", v24[0], v24[1]);
     let results = PcmResults {
         s16le: if v16[0][1] > 0.0 { v16[0][0] / v16[0][1] * v16[1][1] } else { 000. },
         s16be: if v16[0][0] > 0.0 { v16[0][1] / v16[0][0] * v16[1][0] } else { 000. },
@@ -219,6 +256,7 @@ fn detect(filename: &str) -> std::io::Result<PcmType> {
         u24le: (if v24[1][2].l > 0.0 { v24[0][1].l / v24[1][2].l * v24[0][2].l } else { 000. }).min(if v24[1][2].r > 0.0 { v24[0][1].r / v24[1][2].r * v24[0][2].r } else { 000. }),
         u24be: (if v24[1][0].l > 0.0 { v24[0][1].l / v24[1][0].l * v24[0][0].l } else { 000. }).min(if v24[1][0].r > 0.0 { v24[0][1].r / v24[1][0].r * v24[0][0].r } else { 000. }),
     };
-    println!("Res {:?}", results);
-    Ok(results.guess_type())
+    //println!("Res {:?}", results);
+    let pcm_type = results.guess_type();
+    Ok(pcm_type)
 }
