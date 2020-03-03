@@ -39,37 +39,43 @@ mod tests {
     extern crate spectral;
     use spectral::prelude::*;
 
+    fn test(filename: &str, pcm_type: PcmType) {
+        let result = investigate(filename);
+        assert_that(&result).is_ok();
+        assert_that(&result.unwrap().guess_type()).is_ok().is_equal_to(pcm_type);
+    }
+
     #[test]
     fn s16le() {
-        assert_that(&detect("test-s16.pcm")).is_ok().is_equal_to(PcmType { signed: true, bits24: false, big_endian: false });
+        test("test-s16.pcm", PcmType { signed: true, bits24: false, big_endian: false });
     }
     #[test]
     fn s16be() {
-        assert_that(&detect("test-s16be.pcm")).is_ok().is_equal_to(PcmType { signed: true, bits24: false, big_endian: true });
+        test("test-s16be.pcm", PcmType { signed: true, bits24: false, big_endian: true });
     }
     #[test]
     fn u16le() {
-        assert_that(&detect("test-u16.pcm")).is_ok().is_equal_to(PcmType { signed: false, bits24: false, big_endian: false });
+        test("test-u16.pcm", PcmType { signed: false, bits24: false, big_endian: false });
     }
     #[test]
     fn u16be() {
-        assert_that(&detect("test-u16be.pcm")).is_ok().is_equal_to(PcmType { signed: false, bits24: false, big_endian: true });
+        test("test-u16be.pcm", PcmType { signed: false, bits24: false, big_endian: true });
     }
     #[test]
     fn s24le() {
-        assert_that(&detect("test-s24.pcm")).is_ok().is_equal_to(PcmType { signed: true, bits24: true, big_endian: false });
+        test("test-s24.pcm", PcmType { signed: true, bits24: true, big_endian: false });
     }
     #[test]
     fn s24be() {
-        assert_that(&detect("test-s24be.pcm")).is_ok().is_equal_to(PcmType { signed: true, bits24: true, big_endian: true });
+        test("test-s24be.pcm", PcmType { signed: true, bits24: true, big_endian: true });
     }
     #[test]
     fn u24le() {
-        assert_that(&detect("test-u24.pcm")).is_ok().is_equal_to(PcmType { signed: false, bits24: true, big_endian: false });
+        test("test-u24.pcm", PcmType { signed: false, bits24: true, big_endian: false });
     }
     #[test]
     fn u24be() {
-        assert_that(&detect("test-u24be.pcm")).is_ok().is_equal_to(PcmType { signed: false, bits24: true, big_endian: true });
+        test("test-u24be.pcm", PcmType { signed: false, bits24: true, big_endian: true });
     }
 }
 
