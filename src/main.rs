@@ -3,6 +3,11 @@ use std::io::{BufReader, ErrorKind};
 use std::io::prelude::*;
 use std::{fmt, env};
 
+// (C) Copyright 2020 xkr47@outerspace.dyndns.org
+//
+// Exercise program in Rust to detect file type of raw audio 16/24 bit PCM files
+// Uses algorithm purely invented by xkr47
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() {
@@ -261,14 +266,14 @@ fn investigate(filename: &str) -> std::io::Result<PcmResults> {
     //println!("v16 signed {:?} unsigned {:?}", v16[0], v16[1]);
     //println!("v24 signed {:?} unsigned {:?}", v24[0], v24[1]);
     let results = PcmResults {
-        s16le: if v16[0][1] > 0.0 { v16[0][0] / v16[0][1] * v16[1][1] } else { 000. },
-        s16be: if v16[0][0] > 0.0 { v16[0][1] / v16[0][0] * v16[1][0] } else { 000. },
-        u16le: if v16[1][1] > 0.0 { v16[0][0] / v16[1][1] * v16[0][1] } else { 000. },
-        u16be: if v16[1][0] > 0.0 { v16[0][1] / v16[1][0] * v16[0][0] } else { 000. },
-        s24le: (if v24[0][2].l > 0.0 { v24[0][1].l / v24[0][2].l * v24[1][2].l } else { 000. }).min(if v24[0][2].r > 0.0 { v24[0][1].r / v24[0][2].r * v24[1][2].r } else { 000. }),
-        s24be: (if v24[0][0].l > 0.0 { v24[0][1].l / v24[0][0].l * v24[1][0].l } else { 000. }).min(if v24[0][0].r > 0.0 { v24[0][1].r / v24[0][0].r * v24[1][0].r } else { 000. }),
-        u24le: (if v24[1][2].l > 0.0 { v24[0][1].l / v24[1][2].l * v24[0][2].l } else { 000. }).min(if v24[1][2].r > 0.0 { v24[0][1].r / v24[1][2].r * v24[0][2].r } else { 000. }),
-        u24be: (if v24[1][0].l > 0.0 { v24[0][1].l / v24[1][0].l * v24[0][0].l } else { 000. }).min(if v24[1][0].r > 0.0 { v24[0][1].r / v24[1][0].r * v24[0][0].r } else { 000. }),
+        s16le: if v16[0][1] > 0.0 { v16[0][0] / v16[0][1] * v16[1][1] } else { 0. },
+        s16be: if v16[0][0] > 0.0 { v16[0][1] / v16[0][0] * v16[1][0] } else { 0. },
+        u16le: if v16[1][1] > 0.0 { v16[0][0] / v16[1][1] * v16[0][1] } else { 0. },
+        u16be: if v16[1][0] > 0.0 { v16[0][1] / v16[1][0] * v16[0][0] } else { 0. },
+        s24le: (if v24[0][2].l > 0.0 { v24[0][1].l / v24[0][2].l * v24[1][2].l } else { 0. }).min(if v24[0][2].r > 0.0 { v24[0][1].r / v24[0][2].r * v24[1][2].r } else { 0. }),
+        s24be: (if v24[0][0].l > 0.0 { v24[0][1].l / v24[0][0].l * v24[1][0].l } else { 0. }).min(if v24[0][0].r > 0.0 { v24[0][1].r / v24[0][0].r * v24[1][0].r } else { 0. }),
+        u24le: (if v24[1][2].l > 0.0 { v24[0][1].l / v24[1][2].l * v24[0][2].l } else { 0. }).min(if v24[1][2].r > 0.0 { v24[0][1].r / v24[1][2].r * v24[0][2].r } else { 0. }),
+        u24be: (if v24[1][0].l > 0.0 { v24[0][1].l / v24[1][0].l * v24[0][0].l } else { 0. }).min(if v24[1][0].r > 0.0 { v24[0][1].r / v24[1][0].r * v24[0][0].r } else { 0. }),
     };
     //println!("Res {:?}", results);
     Ok(results)
