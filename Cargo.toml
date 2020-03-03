@@ -8,7 +8,3 @@ edition = "2018"
 
 [dependencies]
 spectral = "0.6.0"
-
-[[bin]]
-name = "test"
-path = "src/test.rs"

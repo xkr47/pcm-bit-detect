@@ -1,20 +1,30 @@
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, ErrorKind};
 use std::io::prelude::*;
 use std::{fmt, env};
 
 fn main() {
-    for file in [
-        "test-s16.pcm", "test-s16be.pcm", "test-u16.pcm", "test-u16be.pcm",
-        "test-s24.pcm", "test-s24be.pcm", "test-u24.pcm", "test-u24be.pcm"
-    ].iter() {
-        let res = detect(file).unwrap();
-        println!("{}: {} {} {}",
-                 file,
-                 if res.signed { "signed" } else { "unsigned" },
-                 if res.bits24 { "24bit" } else { "16bit" },
-                 if res.big_endian { "big-endian" } else { "little-endian" },
-        );
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.is_empty() {
+        eprintln!("Usage: {} <file.pcm> [...]", env::args().next().unwrap());
+        return;
+    }
+    for file in args {
+        let res = investigate(&file);
+        if let Ok(res) = res {
+            if let Ok(res) = res.guess_type() {
+                println!("{}: {} {} {}",
+                         file,
+                         if res.signed { "signed" } else { "unsigned" },
+                         if res.bits24 { "24bit" } else { "16bit" },
+                         if res.big_endian { "big-endian" } else { "little-endian" },
+                );
+            } else {
+                println!("{}: unclear", file);
+            }
+        } else {
+            println!("{}: error {}", file, res.unwrap_err());
+        }
     }
 }
 
@@ -81,7 +91,7 @@ impl PcmResults {
     // how much more sure must we be of the most likely outcome compared to the second most likely
     const THRESHOLD: f64 = 10.0;
 
-    fn guess_type(&self) -> PcmType {
+    fn guess_type(&self) -> Result<PcmType, String> {
         let mut res = vec!(
             (PcmType { signed: true, bits24: false, big_endian: false }, self.s16le),
             (PcmType { signed: true, bits24: false, big_endian: true }, self.s16be),
@@ -94,9 +104,10 @@ impl PcmResults {
         );
         res.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         if res[0].1 / res[1].1 < PcmResults::THRESHOLD {
-            panic!("Below threshold for {:?} vs {:?}", res[0], res[1]);
+            Err(format!("Below threshold for {:?} vs {:?}", res[0], res[1]))
+        } else {
+            Ok(res[0].0)
         }
-        res[0].0
     }
 }
 
@@ -112,7 +123,7 @@ impl Avg {
     fn new() -> Avg {
         Avg { sum: 0, diffsum: 0, count: 0, last: 0, debug: false }
     }
-    fn newd() -> Avg {
+    fn _newd() -> Avg {
         Avg { sum: 0, diffsum: 0, count: 0, last: 0, debug: true }
     }
 
@@ -128,7 +139,7 @@ impl Avg {
         }
     }
 
-    fn avg(&self) -> f64 {
+    fn _avg(&self) -> f64 {
         self.sum as f64 / self.count as f64
     }
 
@@ -150,15 +161,15 @@ struct Avg2 {
 
 impl Avg2 {
     fn new() -> Avg2 { Avg2 { l: Avg::new(), r: Avg::new() } }
-    fn newd() -> Avg2 { Avg2 { l: Avg::newd(), r: Avg::newd() } }
+    fn _newd() -> Avg2 { Avg2 { l: Avg::_newd(), r: Avg::_newd() } }
 
     fn add(&mut self, l: i8, r: i8) {
         self.l.add(l);
         self.r.add(r);
     }
 
-    fn avg(&self) -> Stereo<f64> {
-        Stereo { l: self.l.avg(), r: self.r.avg() }
+    fn _avg(&self) -> Stereo<f64> {
+        Stereo { l: self.l._avg(), r: self.r._avg() }
     }
 
     fn diffavg(&self) -> Stereo<f64> {
@@ -168,7 +179,7 @@ impl Avg2 {
 
 impl fmt::Display for Avg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} / {}", self.avg(), self.diffavg())
+        write!(f, "{} / {}", self._avg(), self.diffavg())
     }
 }
 
@@ -179,17 +190,20 @@ impl fmt::Debug for Avg {
     }
 }
 
-fn detect(filename: &str) -> std::io::Result<PcmType> {
+fn investigate(filename: &str) -> std::io::Result<PcmResults> {
     let file = File::open(filename)?;
-    /*
     let meta = file.metadata()?;
-    match meta.len() / 2 % 6 {
-        2 | 4 => return Ok(Signed16),
-        3 => return Ok(Signed24),
-        1 | 5 => panic!("Bad file {} length {}", filename, meta.len()),
-        _ => (),
+    if !meta.is_file() {
+        return Err(std::io::Error::from(ErrorKind::InvalidInput));
     }
-*/
+    /*
+        match meta.len() / 2 % 6 {
+            2 | 4 => return Ok(Signed16),
+            3 => return Ok(Signed24),
+            1 | 5 => panic!("Bad file {} length {}", filename, meta.len()),
+            _ => (),
+        }
+    */
     let mut buf_reader = BufReader::new(file);
 
     let mut a16: [[Avg; 2]; 2] = [[Avg::new(), Avg::new()], [Avg::new(), Avg::new()]];
@@ -257,6 +271,5 @@ fn detect(filename: &str) -> std::io::Result<PcmType> {
         u24be: (if v24[1][0].l > 0.0 { v24[0][1].l / v24[1][0].l * v24[0][0].l } else { 000. }).min(if v24[1][0].r > 0.0 { v24[0][1].r / v24[1][0].r * v24[0][0].r } else { 000. }),
     };
     //println!("Res {:?}", results);
-    let pcm_type = results.guess_type();
-    Ok(pcm_type)
+    Ok(results)
 }
